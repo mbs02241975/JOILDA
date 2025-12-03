@@ -77,7 +77,7 @@ export const StorageService = {
   init: (config?: DatabaseConfig) => {
     // 1. Prioridade: Verifica se o arquivo firebaseConfig.ts foi preenchido corretamente pelo usuário
     if (!config && firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('COLAR_')) {
-        console.log("Usando configuração fixa do firebaseConfig.ts");
+        console.log("Inicializando conexão automática com Firebase...");
         config = firebaseConfig;
     }
 
@@ -221,7 +221,9 @@ export const StorageService = {
       } catch (error: any) {
           console.error("Erro no Firebase:", error);
           if (error.code === 'resource-exhausted' || error.message?.includes('exceeds')) {
-              alert('A imagem é muito pesada para o banco gratuito. Tente uma foto menor.');
+              alert('A imagem é muito pesada para o banco gratuito. Tente uma foto menor ou com menos qualidade.');
+          } else {
+              alert('Erro ao salvar no banco de dados. Verifique sua conexão.');
           }
           throw error;
       }
@@ -233,15 +235,25 @@ export const StorageService = {
       // Tenta achar por nome também para evitar duplicatas no local
       const nameIndex = products.findIndex((p: Product) => p.name === product.name && p.id !== product.id);
 
-      if (existingIndex >= 0) {
-        products[existingIndex] = product;
-      } else if (nameIndex >= 0) {
-         products[nameIndex].stock += product.stock;
-         products[nameIndex].price = product.price; // Atualiza info
-      } else {
-        products.push(product);
+      // Se é um produto novo sem ID (ou ID temp), gera um ID
+      if (!product.id || product.id.length < 5) {
+          product.id = 'local_' + Date.now();
       }
-      safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+
+      try {
+          if (existingIndex >= 0) {
+            products[existingIndex] = product;
+          } else if (nameIndex >= 0) {
+             products[nameIndex].stock += product.stock;
+             products[nameIndex].price = product.price;
+             products[nameIndex].imageUrl = product.imageUrl || products[nameIndex].imageUrl;
+          } else {
+            products.push(product);
+          }
+          safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+      } catch (e) {
+          alert('Memória do navegador cheia! Não foi possível salvar a imagem. Conecte ao Firebase para espaço ilimitado.');
+      }
     }
   },
 
@@ -390,3 +402,7 @@ export const StorageService = {
     }
   }
 };
+
+// --- AUTO-INITIALIZE ---
+// Tenta conectar imediatamente usando as chaves fixas
+StorageService.init();
