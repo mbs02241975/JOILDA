@@ -181,7 +181,7 @@ export const AdminDashboard: React.FC = () => {
         setIsEditModalOpen(false);
         setEditingProduct(null);
       } catch (error) {
-        alert("Erro ao salvar produto. Se estiver enviando uma foto, ela pode ser muito pesada para o banco gratuito.");
+        alert("Erro ao salvar produto. Se estiver enviando uma foto, ela pode ser muito pesada para o banco gratuito. Tente usar o campo de Link da Imagem.");
       }
     }
   };
@@ -196,9 +196,9 @@ export const AdminDashboard: React.FC = () => {
       reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
-          // Resize Logic using Canvas - AGGRESSIVE RESIZE
+          // Resize Logic using Canvas - EXTREME AGGRESSIVE RESIZE for Free Tier
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 350; // Largura máxima bem reduzida para mobile
+          const MAX_WIDTH = 250; // Reduzido para 250px (aprox 30kb)
           
           let width = img.width;
           let height = img.height;
@@ -214,8 +214,8 @@ export const AdminDashboard: React.FC = () => {
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, width, height);
           
-          // Compress to JPEG 50% quality
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
+          // Compress to JPEG 40% quality
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
           
           setEditingProduct({ ...editingProduct, imageUrl: dataUrl });
           setIsProcessingImage(false);
@@ -1087,8 +1087,8 @@ export const AdminDashboard: React.FC = () => {
             <form onSubmit={handleSaveProduct} className="space-y-4">
               
               {/* Image Upload Section */}
-              <div className="flex justify-center mb-4">
-                 <div className="relative group">
+              <div className="flex justify-center mb-4 flex-col items-center">
+                 <div className="relative group mb-2">
                     {editingProduct.imageUrl ? (
                         <img src={editingProduct.imageUrl} alt="Preview" className="w-32 h-32 object-cover rounded-lg border-2 border-brand" />
                     ) : (
@@ -1114,6 +1114,16 @@ export const AdminDashboard: React.FC = () => {
                     />
                  </div>
                  {isProcessingImage && <p className="text-xs text-center text-brand mt-1 animate-pulse">Comprimindo imagem...</p>}
+                 
+                 <div className="w-full">
+                     <input 
+                       type="text" 
+                       placeholder="Ou cole o link da imagem (URL)" 
+                       value={editingProduct.imageUrl} 
+                       onChange={(e) => setEditingProduct({...editingProduct, imageUrl: e.target.value})}
+                       className="w-full text-xs border border-gray-300 rounded p-1 text-center bg-gray-50"
+                     />
+                 </div>
               </div>
 
               <div>
