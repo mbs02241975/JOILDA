@@ -180,8 +180,9 @@ export const AdminDashboard: React.FC = () => {
         await StorageService.saveProduct(editingProduct);
         setIsEditModalOpen(false);
         setEditingProduct(null);
-      } catch (error) {
-        alert("Erro ao salvar produto. Se estiver enviando uma foto, ela pode ser muito pesada para o banco gratuito. Tente usar o campo de Link da Imagem.");
+      } catch (error: any) {
+        console.error(error);
+        // Error handling is done in storageService, but we catch here to prevent crash
       }
     }
   };
@@ -198,7 +199,7 @@ export const AdminDashboard: React.FC = () => {
         img.onload = () => {
           // Resize Logic using Canvas - EXTREME AGGRESSIVE RESIZE for Free Tier
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 250; // Reduzido para 250px (aprox 30kb)
+          const MAX_WIDTH = 250; // 250px ensures very small file size
           
           let width = img.width;
           let height = img.height;
@@ -735,10 +736,10 @@ export const AdminDashboard: React.FC = () => {
               <button 
                 onClick={() => {
                   setEditingProduct({
-                    id: Date.now().toString(),
+                    id: '', // Empty ID tells StorageService to CREATE NEW
                     name: '', description: '', price: 0,
                     stock: 0, category: Category.BEBIDAS,
-                    imageUrl: '' // Empty starts without image
+                    imageUrl: ''
                   });
                   setIsEditModalOpen(true);
                 }}

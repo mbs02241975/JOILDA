@@ -186,12 +186,13 @@ export const StorageService = {
   saveProduct: async (product: Product) => {
     if (isCloud()) {
       try {
-          // Se tem ID longo (>10 caracteres), assumimos que é edição de um existente no Firestore
-          if (product.id && product.id.length > 10) { 
+          // Lógica Corrigida: Se o ID existe e não é vazio, é atualização.
+          if (product.id && product.id.length > 0) { 
             const docRef = doc(db, 'products', product.id);
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { id, ...data } = product;
             await updateDoc(docRef, data);
+            console.log("Produto atualizado com sucesso");
           } else {
             // Novo Produto: Verifica duplicidade por NOME antes de criar
             const q = query(collection(db, 'products'), where('name', '==', product.name));
@@ -205,25 +206,27 @@ export const StorageService = {
                 
                 await updateDoc(existingDoc.ref, {
                     stock: currentStock + product.stock,
-                    // Atualiza preço e descrição para o mais recente, se desejar
                     price: product.price,
                     description: product.description,
                     imageUrl: product.imageUrl || currentData.imageUrl
                 });
                 console.log(`Estoque atualizado para ${product.name}`);
             } else {
-                // Não existe, cria novo
+                // Não existe, cria novo (Firestore gera o ID)
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                const { id, ...data } = product;
+                const { id, ...data } = product; // Remove o ID vazio se existir
                 await addDoc(collection(db, 'products'), data);
+                console.log("Novo produto criado");
             }
           }
       } catch (error: any) {
           console.error("Erro no Firebase:", error);
-          if (error.code === 'resource-exhausted' || error.message?.includes('exceeds')) {
-              alert('A imagem é muito pesada para o banco gratuito. Tente uma foto menor ou com menos qualidade.');
+          if (error.code === 'permission-denied') {
+             alert('ERRO DE PERMISSÃO: O banco de dados está bloqueado. Vá no console do Firebase > Firestore Database > Regras e altere para "allow read, write: if true;"');
+          } else if (error.code === 'resource-exhausted') {
+              alert('A imagem é muito pesada para o banco gratuito. Tente usar o campo de Link (URL) em vez da câmera.');
           } else {
-              alert('Erro ao salvar no banco de dados. Verifique sua conexão.');
+              alert(`Erro ao salvar: ${error.message}`);
           }
           throw error;
       }
@@ -232,7 +235,6 @@ export const StorageService = {
       const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
       const existingIndex = products.findIndex((p: Product) => p.id === product.id);
       
-      // Tenta achar por nome também para evitar duplicatas no local
       const nameIndex = products.findIndex((p: Product) => p.name === product.name && p.id !== product.id);
 
       // Se é um produto novo sem ID (ou ID temp), gera um ID
@@ -252,7 +254,7 @@ export const StorageService = {
           }
           safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
       } catch (e) {
-          alert('Memória do navegador cheia! Não foi possível salvar a imagem. Conecte ao Firebase para espaço ilimitado.');
+          alert('Memória do navegador cheia! Não foi possível salvar a imagem.');
       }
     }
   },
@@ -381,7 +383,11 @@ export const StorageService = {
             alert("Conexão com Banco de Dados (Firebase) está OK!");
         } catch (e: any) {
             console.error("Conexão Firestore: ERRO", e);
-            alert(`Erro ao conectar com Firebase: ${e.message}`);
+            if (e.code === 'permission-denied') {
+                alert("ERRO CRÍTICO: Permissão Negada. Verifique as 'Regras' do Firestore no console do Google.");
+            } else {
+                alert(`Erro ao conectar com Firebase: ${e.message}`);
+            }
         }
     } else {
         console.log("Modo Local (Offline/Fallback)");
