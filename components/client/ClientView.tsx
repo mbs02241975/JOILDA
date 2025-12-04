@@ -38,7 +38,9 @@ export const ClientView: React.FC<Props> = ({ tableId }) => {
 
     // Subscribe Orders (Filter for this table)
     const unsubOrders = StorageService.subscribeOrders((allOrders) => {
-        setMyOrders(allOrders.filter(o => o.tableId === tableId));
+        // Filtra apenas pedidos desta mesa que NÃO foram pagos/arquivados ainda.
+        // Assim, quando a mesa fecha, a conta zera para o próximo cliente.
+        setMyOrders(allOrders.filter(o => o.tableId === tableId && o.status !== OrderStatus.PAID));
     });
 
     // Subscribe Table Status

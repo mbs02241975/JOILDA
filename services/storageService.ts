@@ -375,12 +375,40 @@ export const StorageService = {
 
   finalizeTable: async (tableId: number) => {
     if (isCloud()) {
+       // 1. Remove status de fechamento da mesa
        await deleteDoc(doc(db, 'tables', tableId.toString()));
-       // We do not delete orders, they stay in history
+       
+       // 2. Busca todos os pedidos ativos (não cancelados e não pagos) dessa mesa
+       const q = query(
+           collection(db, 'orders'), 
+           where('tableId', '==', tableId),
+           where('status', '!=', OrderStatus.CANCELED)
+       );
+       
+       const querySnapshot = await getDocs(q);
+       
+       // 3. Atualiza os pedidos para status PAID (Pago/Finalizado)
+       // Isso limpa a mesa para o próximo cliente, mas mantém o registro financeiro
+       querySnapshot.forEach(async (d) => {
+           if (d.data().status !== OrderStatus.PAID) {
+               await updateDoc(d.ref, { status: OrderStatus.PAID });
+           }
+       });
+
     } else {
       const tables = JSON.parse(safeStorage.getItem(STORAGE_KEYS.TABLES) || '{}');
       delete tables[tableId];
       safeStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(tables));
+      
+      // Modo Local: Marca pedidos como pagos
+      const orders = JSON.parse(safeStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
+      const updatedOrders = orders.map((o: Order) => {
+          if (o.tableId === tableId && o.status !== OrderStatus.CANCELED) {
+              return { ...o, status: OrderStatus.PAID };
+          }
+          return o;
+      });
+      safeStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
     }
   },
   

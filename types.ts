@@ -16,7 +16,8 @@ export enum OrderStatus {
   PENDING = 'Pendente',
   PREPARING = 'Em Preparo',
   DELIVERED = 'Entregue',
-  CANCELED = 'Cancelado'
+  CANCELED = 'Cancelado',
+  PAID = 'Pago/Finalizado'
 }
 
 export enum TableStatus {

@@ -461,14 +461,11 @@ export const AdminDashboard: React.FC = () => {
 
     const filteredOrders = orders.filter(o => {
       const orderDate = new Date(o.timestamp);
-      return o.status === OrderStatus.DELIVERED && orderDate >= start && orderDate <= end;
+      // Inclui pedidos PAID (que foram finalizados e pagos) e DELIVERED (caso ainda não tenha fechado mesa)
+      return (o.status === OrderStatus.PAID || o.status === OrderStatus.DELIVERED) && orderDate >= start && orderDate <= end;
     });
 
     const totalRevenue = filteredOrders.reduce((acc, o) => acc + o.total, 0);
-    
-    // Note: To have accurate payment method split, we would need to store payment method on ORDER, 
-    // but currently it's stored on the Table Session (tables). 
-    // For now, we calculate total revenue.
     
     return {
       totalRevenue,
@@ -477,7 +474,8 @@ export const AdminDashboard: React.FC = () => {
     };
   };
 
-  const activeOrders = orders.filter(o => o.status !== OrderStatus.DELIVERED && o.status !== OrderStatus.CANCELED);
+  // Active orders shouldn't show PAID (archived) orders
+  const activeOrders = orders.filter(o => o.status !== OrderStatus.PAID && o.status !== OrderStatus.CANCELED);
   const isLocalhost = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
 
   // --- Auth Gate ---
@@ -638,7 +636,7 @@ export const AdminDashboard: React.FC = () => {
                 .filter(([_, t]: [string, any]) => t.status === TableStatus.CLOSING_REQUESTED)
                 .map(([id, t]: [string, any]) => {
                   const realTableId = parseInt(id);
-                  const tableOrders = orders.filter(o => o.tableId === realTableId && o.status !== OrderStatus.CANCELED);
+                  const tableOrders = orders.filter(o => o.tableId === realTableId && o.status !== OrderStatus.CANCELED && o.status !== OrderStatus.PAID);
                   const totalConsumption = tableOrders.reduce((acc, o) => acc + o.total, 0);
 
                   return (
