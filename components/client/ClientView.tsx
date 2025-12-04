@@ -40,7 +40,13 @@ export const ClientView: React.FC<Props> = ({ tableId }) => {
     const unsubOrders = StorageService.subscribeOrders((allOrders) => {
         // Filtra apenas pedidos desta mesa que NÃO foram pagos/arquivados ainda.
         // Assim, quando a mesa fecha, a conta zera para o próximo cliente.
-        setMyOrders(allOrders.filter(o => o.tableId === tableId && o.status !== OrderStatus.PAID));
+        // Usa == para permitir comparação entre string e number ('1' == 1)
+        setMyOrders(allOrders.filter(o => 
+          // eslint-disable-next-line eqeqeq
+          o.tableId == tableId && 
+          o.status !== OrderStatus.PAID && 
+          o.status !== OrderStatus.CANCELED
+        ));
     });
 
     // Subscribe Table Status
@@ -142,6 +148,9 @@ export const ClientView: React.FC<Props> = ({ tableId }) => {
           <div className="flex flex-col h-screen items-center justify-center bg-gray-50">
              <i className="fas fa-circle-notch fa-spin text-4xl text-brand mb-4"></i>
              <p className="text-gray-500">Carregando cardápio...</p>
+             <button onClick={() => window.location.reload()} className="mt-4 text-brand underline text-sm">
+                 Demorando muito? Tente recarregar
+             </button>
           </div>
       )
   }
@@ -198,12 +207,17 @@ export const ClientView: React.FC<Props> = ({ tableId }) => {
                 <div>
                   <h3 className="font-bold text-gray-800 leading-tight">{product.name}</h3>
                   <p className="text-xs text-gray-500 mt-1 line-clamp-2">{product.description}</p>
+                  {/* Show out of stock visual cue */}
+                  {product.stock === 0 && (
+                      <span className="text-xs text-red-500 font-bold">Esgotado</span>
+                  )}
                 </div>
                 <div className="flex justify-between items-center mt-2">
                   <span className="font-bold text-brand-dark">R$ {product.price.toFixed(2)}</span>
                   <button 
                     onClick={() => addToCart(product)}
-                    className="w-8 h-8 bg-brand rounded-full text-white flex items-center justify-center hover:bg-brand-dark active:scale-95"
+                    disabled={product.stock === 0}
+                    className="w-8 h-8 bg-brand rounded-full text-white flex items-center justify-center hover:bg-brand-dark active:scale-95 disabled:bg-gray-300"
                   >
                     <i className="fas fa-plus text-xs"></i>
                   </button>

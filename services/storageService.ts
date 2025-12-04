@@ -381,22 +381,26 @@ export const StorageService = {
        
        // 2. Busca todos os pedidos ativos dessa mesa para arquivar
        // CORREÇÃO: Busca tanto pelo número quanto pela string para garantir que acha tudo
-       const q = query(
-           collection(db, 'orders'), 
-           where('tableId', 'in', [tableId, tableId.toString()])
-       );
+       const q1 = query(collection(db, 'orders'), where('tableId', '==', tableId));
+       const q2 = query(collection(db, 'orders'), where('tableId', '==', tableId.toString()));
        
-       const querySnapshot = await getDocs(q);
+       const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+       
        const updatePromises: Promise<void>[] = [];
-       
-       // 3. Atualiza os pedidos para status PAID (Pago/Finalizado) de forma segura
-       querySnapshot.forEach((d) => {
-           const data = d.data();
-           // Só altera se não for cancelado e se já não estiver pago
-           if (data.status !== OrderStatus.CANCELED && data.status !== OrderStatus.PAID) {
-               updatePromises.push(updateDoc(d.ref, { status: OrderStatus.PAID }));
-           }
-       });
+       const docsProcessed = new Set();
+
+       const processDoc = (d: any) => {
+         if (docsProcessed.has(d.id)) return;
+         docsProcessed.add(d.id);
+
+         const data = d.data();
+         if (data.status !== OrderStatus.CANCELED && data.status !== OrderStatus.PAID) {
+            updatePromises.push(updateDoc(d.ref, { status: OrderStatus.PAID }));
+         }
+       };
+
+       snap1.forEach(processDoc);
+       snap2.forEach(processDoc);
 
        // Aguarda TODOS os pedidos serem atualizados antes de liberar
        await Promise.all(updatePromises);
@@ -410,7 +414,8 @@ export const StorageService = {
       // Modo Local: Marca pedidos como pagos
       const orders = JSON.parse(safeStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
       const updatedOrders = orders.map((o: Order) => {
-          if (o.tableId === tableId && o.status !== OrderStatus.CANCELED) {
+          // eslint-disable-next-line eqeqeq
+          if (o.tableId == tableId && o.status !== OrderStatus.CANCELED) {
               return { ...o, status: OrderStatus.PAID };
           }
           return o;
