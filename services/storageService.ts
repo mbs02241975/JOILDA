@@ -1,5 +1,5 @@
 import { Product, Category, Order, TableSession, TableStatus, OrderStatus } from '../types';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit } from 'firebase/firestore';
 import { firebaseConfig } from './firebaseConfig';
 
@@ -75,14 +75,27 @@ const isCloud = () => !!db;
 export const StorageService = {
   // --- Initialization ---
   init: (config?: DatabaseConfig) => {
-    // 1. Prioridade: Verifica se o arquivo firebaseConfig.ts foi preenchido corretamente pelo usuário
-    if (!config && firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('COLAR_')) {
-        console.log("Inicializando conexão automática com Firebase...");
-        config = firebaseConfig;
+    // 0. Prevenção de duplicidade (Crítico para Mobile/React)
+    // Se já existe uma instância do Firebase rodando, reutiliza ela.
+    if (getApps().length > 0) {
+        console.log("Firebase já inicializado. Reutilizando conexão.");
+        try {
+            const app = getApp();
+            db = getFirestore(app);
+            return true;
+        } catch (e) {
+            console.warn("Erro ao recuperar app existente, tentando reiniciar...");
+        }
     }
 
-    // 2. Fallback: Tenta carregar do LocalStorage (Configurado via Painel Admin anteriormente)
-    if (!config) {
+    // 1. Prioridade Absoluta: Configuração Hardcoded (firebaseConfig.ts)
+    // Isso garante que celulares sempre conectem, ignorando cache antigo ou localStorage
+    if (firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('COLAR_')) {
+        console.log("Inicializando conexão com credenciais fixas.");
+        config = firebaseConfig;
+    } 
+    // 2. Fallback: LocalStorage (apenas se não tiver config fixa, o que é raro agora)
+    else if (!config) {
       const storedConfig = safeStorage.getItem(STORAGE_KEYS.DB_CONFIG);
       if (storedConfig) {
         try {
@@ -95,13 +108,20 @@ export const StorageService = {
       try {
         const app = initializeApp(config);
         db = getFirestore(app);
-        console.log("Firebase initialized successfully");
+        console.log("Firebase conectado com sucesso!");
         return true;
-      } catch (error) {
-        console.error("Failed to init Firebase", error);
+      } catch (error: any) {
+        // Se der erro de duplicidade por condição de corrida, recupera a instância
+        if (error.code === 'app/duplicate-app') {
+            const app = getApp();
+            db = getFirestore(app);
+            return true;
+        }
+        console.error("Falha ao conectar Firebase", error);
         return false;
       }
     }
+    console.warn("Nenhuma configuração válida encontrada. Iniciando em modo OFFLINE (Local).");
     return false;
   },
 
@@ -125,6 +145,11 @@ export const StorageService = {
       return onSnapshot(q, (snapshot) => {
         const products = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Product));
         callback(products);
+      }, (error) => {
+          console.error("Erro ao assinar produtos:", error);
+          if (error.code === 'permission-denied') {
+              alert("ERRO NO CELULAR: Permissão negada pelo banco de dados. O Administrador precisa liberar o acesso no painel do Firebase (Regras).");
+          }
       });
     } else {
       // LocalStorage Polling Fallback
