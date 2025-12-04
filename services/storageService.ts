@@ -1,7 +1,7 @@
 
-import { Product, Category, Order, TableSession, TableStatus, OrderStatus } from '../types';
+import { Product, Category, Order, TableStatus, OrderStatus } from '../types';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit, writeBatch, Timestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit, writeBatch } from 'firebase/firestore';
 import { firebaseConfig } from './firebaseConfig';
 
 // --- Configuration Interface ---
@@ -316,23 +316,39 @@ export const StorageService = {
     }
   },
 
-  // --- SOLUÇÃO NUCLEAR: Mover para Coleção de Histórico ---
+  // --- SOLUÇÃO PENTE FINO: Busca Híbrida e Movimentação Segura ---
   finalizeTable: async (tableId: number) => {
     if (isCloud()) {
-       // 1. Remove status de fechamento da mesa
-       await deleteDoc(doc(db, 'tables', tableId.toString()));
-       
-       // 2. Busca TODOS os pedidos ativos da coleção 'orders'
-       const snapshot = await getDocs(collection(db, 'orders'));
-       const batch = writeBatch(db);
-       let movedCount = 0;
+       try {
+           // 1. Remove status de fechamento da mesa
+           await deleteDoc(doc(db, 'tables', tableId.toString()));
+           
+           console.log(`Iniciando fechamento da mesa ${tableId}...`);
 
-       snapshot.docs.forEach((docSnap) => {
-           const data = docSnap.data();
-           // Comparação flexível para pegar tanto string "1" quanto number 1
-           // eslint-disable-next-line eqeqeq
-           if (data.tableId == tableId) {
-               // A. Cria uma cópia na coleção 'orders_history' (Histórico Financeiro)
+           // 2. Busca Dupla: Pelo número E pelo texto (para garantir que acha tudo)
+           const qNumber = query(collection(db, 'orders'), where('tableId', '==', Number(tableId)));
+           const qString = query(collection(db, 'orders'), where('tableId', '==', String(tableId)));
+           
+           const [snapNum, snapStr] = await Promise.all([getDocs(qNumber), getDocs(qString)]);
+           
+           // Junta os resultados sem duplicatas (pelo ID do documento)
+           const allDocsMap = new Map();
+           snapNum.docs.forEach(d => allDocsMap.set(d.id, d));
+           snapStr.docs.forEach(d => allDocsMap.set(d.id, d));
+
+           const docsToMove = Array.from(allDocsMap.values());
+           
+           if (docsToMove.length === 0) {
+               alert(`Nenhum pedido ativo encontrado para Mesa ${tableId}. Mesa liberada.`);
+               return;
+           }
+
+           const batch = writeBatch(db);
+
+           docsToMove.forEach((docSnap) => {
+               const data = docSnap.data();
+               
+               // A. Cria uma cópia na coleção 'orders_history'
                const historyRef = doc(db, 'orders_history', docSnap.id);
                batch.set(historyRef, { 
                    ...data, 
@@ -340,21 +356,20 @@ export const StorageService = {
                    archivedAt: Date.now() 
                });
 
-               // B. Deleta da coleção 'orders' (Mesa fica vazia instantaneamente)
+               // B. Deleta da coleção 'orders' (Mesa fica limpa imediatamente)
                batch.delete(docSnap.ref);
-               movedCount++;
-           }
-       });
+           });
 
-       if (movedCount > 0) {
            await batch.commit();
-           console.log(`Mesa ${tableId} arquivada. ${movedCount} pedidos movidos para 'orders_history'.`);
-       } else {
-           console.log(`Mesa ${tableId} fechada. Nenhum pedido para mover.`);
+           alert(`Mesa ${tableId} fechada com sucesso! ${docsToMove.length} pedidos arquivados.`);
+
+       } catch (error: any) {
+           console.error("Erro fatal ao fechar mesa:", error);
+           alert(`Erro ao fechar mesa: ${error.message}`);
        }
 
     } else {
-      // Lógica Local (manter como estava, apenas deletando/status)
+      // Lógica Local (manter como estava)
       const tables = JSON.parse(safeStorage.getItem(STORAGE_KEYS.TABLES) || '{}');
       delete tables[tableId];
       safeStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(tables));
@@ -371,12 +386,9 @@ export const StorageService = {
     }
   },
   
-  // Nova função para buscar histórico financeiro
   getSalesHistory: async (startDate: Date, endDate: Date): Promise<Order[]> => {
       if(isCloud()) {
-          // No Firestore, queries por data complexas exigem índice. 
-          // Para simplificar e evitar travar, vamos baixar o histórico e filtrar na memória 
-          // (supondo volume razoável para barraca de praia)
+          // Busca histórico da coleção orders_history
           const snapshot = await getDocs(collection(db, 'orders_history'));
           const history = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Order));
           
@@ -385,7 +397,6 @@ export const StorageService = {
               return d >= startDate && d <= endDate;
           });
       } else {
-          // No modo local, pedidos pagos ficam na mesma lista mas com status PAID
           const stored = safeStorage.getItem(STORAGE_KEYS.ORDERS);
           const allOrders = stored ? JSON.parse(stored) : [];
           return allOrders.filter((o: Order) => {
