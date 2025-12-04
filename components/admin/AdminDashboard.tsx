@@ -76,6 +76,7 @@ export const AdminDashboard: React.FC = () => {
   const [isLoadingAi, setIsLoadingAi] = useState(false);
   const [reportStartDate, setReportStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportEndDate, setReportEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [financialStats, setFinancialStats] = useState({ totalRevenue: 0, orderCount: 0, averageTicket: 0 });
 
   // Notification State
   const [selectedSound, setSelectedSound] = useState<SoundType>('classic');
@@ -145,6 +146,33 @@ export const AdminDashboard: React.FC = () => {
         unsubOrders();
     };
   }, [selectedSound, lastOrderCount, isAuthenticated]);
+
+  // Carregar dados financeiros quando a aba ou datas mudam
+  useEffect(() => {
+    if (isAuthenticated && activeTab === 'reports') {
+        loadFinancialData();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, activeTab, reportStartDate, reportEndDate]);
+
+  const loadFinancialData = async () => {
+      const start = new Date(reportStartDate);
+      start.setHours(0,0,0,0);
+      const end = new Date(reportEndDate);
+      end.setHours(23,59,59,999);
+
+      // Busca na coleção de histórico (orders_history)
+      const historyOrders = await StorageService.getSalesHistory(start, end);
+      
+      const totalRevenue = historyOrders.reduce((acc, o) => acc + o.total, 0);
+      const orderCount = historyOrders.length;
+      
+      setFinancialStats({
+          totalRevenue,
+          orderCount,
+          averageTicket: orderCount ? totalRevenue / orderCount : 0
+      });
+  };
 
   const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
@@ -306,13 +334,26 @@ export const AdminDashboard: React.FC = () => {
 
   const generateAiReport = async () => {
     setIsLoadingAi(true);
-    // Fetch all orders one-off for report
-    const allOrders = await StorageService.getOrdersOnce();
-    const salesData = allOrders.map(o => ({
+    // Fetch historical orders for report
+    const start = new Date(reportStartDate);
+    start.setHours(0,0,0,0);
+    const end = new Date(reportEndDate);
+    end.setHours(23,59,59,999);
+    
+    const historyOrders = await StorageService.getSalesHistory(start, end);
+
+    const salesData = historyOrders.map(o => ({
       items: o.items.map(i => ({ name: i.name, qty: i.quantity })),
       total: o.total,
       date: new Date(o.timestamp).toLocaleDateString()
     }));
+    
+    if (salesData.length === 0) {
+        setAiReport("Não há dados de vendas (pedidos finalizados) para o período selecionado.");
+        setIsLoadingAi(false);
+        return;
+    }
+
     const report = await GeminiService.generateDailyReport(salesData);
     setAiReport(report);
     setIsLoadingAi(false);
@@ -455,30 +496,9 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // --- Financial Report Calculation ---
-  const getFilteredFinancials = () => {
-    const start = new Date(reportStartDate);
-    start.setHours(0,0,0,0);
-    const end = new Date(reportEndDate);
-    end.setHours(23,59,59,999);
-
-    const filteredOrders = orders.filter(o => {
-      const orderDate = new Date(o.timestamp);
-      // O Relatório DEVE incluir pedidos pagos (PAID) e entregues
-      return (o.status === OrderStatus.PAID || o.status === OrderStatus.DELIVERED) && orderDate >= start && orderDate <= end;
-    });
-
-    const totalRevenue = filteredOrders.reduce((acc, o) => acc + o.total, 0);
-    
-    return {
-      totalRevenue,
-      orderCount: filteredOrders.length,
-      averageTicket: filteredOrders.length ? totalRevenue / filteredOrders.length : 0
-    };
-  };
-
   // Active orders shouldn't show PAID (archived) orders
-  const activeOrders = orders.filter(o => o.status !== OrderStatus.PAID && o.status !== OrderStatus.CANCELED);
+  // Agora que movemos os pagos para outra coleção, o array 'orders' só tem ativos
+  const activeOrders = orders.filter(o => o.status !== OrderStatus.CANCELED);
   const isLocalhost = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
 
   // --- Auth Gate ---
@@ -819,7 +839,7 @@ export const AdminDashboard: React.FC = () => {
                       className="border rounded px-2 py-1 text-sm"
                     />
                     <button 
-                       onClick={() => window.location.reload()} 
+                       onClick={loadFinancialData} 
                        className="bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-600"
                        title="Atualizar Dados"
                     >
@@ -828,25 +848,20 @@ export const AdminDashboard: React.FC = () => {
                  </div>
                </div>
 
-               {(() => {
-                 const stats = getFilteredFinancials();
-                 return (
-                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                      <div className="bg-green-50 p-4 rounded-lg border border-green-100 text-center">
-                         <div className="text-sm text-green-600 mb-1">Faturamento Total</div>
-                         <div className="text-3xl font-bold text-green-800">R$ {stats.totalRevenue.toFixed(2)}</div>
-                      </div>
-                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-center">
-                         <div className="text-sm text-blue-600 mb-1">Pedidos Finalizados</div>
-                         <div className="text-3xl font-bold text-blue-800">{stats.orderCount}</div>
-                      </div>
-                      <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 text-center">
-                         <div className="text-sm text-purple-600 mb-1">Ticket Médio</div>
-                         <div className="text-3xl font-bold text-purple-800">R$ {stats.averageTicket.toFixed(2)}</div>
-                      </div>
-                   </div>
-                 );
-               })()}
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  <div className="bg-green-50 p-4 rounded-lg border border-green-100 text-center">
+                     <div className="text-sm text-green-600 mb-1">Faturamento Total</div>
+                     <div className="text-3xl font-bold text-green-800">R$ {financialStats.totalRevenue.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-center">
+                     <div className="text-sm text-blue-600 mb-1">Pedidos Finalizados</div>
+                     <div className="text-3xl font-bold text-blue-800">{financialStats.orderCount}</div>
+                  </div>
+                  <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 text-center">
+                     <div className="text-sm text-purple-600 mb-1">Ticket Médio</div>
+                     <div className="text-3xl font-bold text-purple-800">R$ {financialStats.averageTicket.toFixed(2)}</div>
+                  </div>
+               </div>
             </div>
 
             <div className="bg-white p-6 rounded shadow">

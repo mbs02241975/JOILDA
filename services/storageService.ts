@@ -1,7 +1,7 @@
 
 import { Product, Category, Order, TableSession, TableStatus, OrderStatus } from '../types';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit, writeBatch } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit, writeBatch, Timestamp } from 'firebase/firestore';
 import { firebaseConfig } from './firebaseConfig';
 
 // --- Configuration Interface ---
@@ -154,10 +154,15 @@ export const StorageService = {
 
   subscribeOrders: (callback: (orders: Order[]) => void) => {
     if (isCloud()) {
+      // Monitora apenas pedidos ativos na coleção 'orders'
       const q = query(collection(db, 'orders'), orderBy('timestamp', 'desc'));
       return onSnapshot(q, (snapshot) => {
         const orders = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Order));
         callback(orders);
+      }, (error) => {
+         if (error.code === 'permission-denied') {
+             alert('Erro de Permissão: O administrador precisa liberar o acesso no painel do Firebase (Aba Regras).');
+         }
       });
     } else {
       const fetch = () => {
@@ -311,35 +316,45 @@ export const StorageService = {
     }
   },
 
+  // --- SOLUÇÃO NUCLEAR: Mover para Coleção de Histórico ---
   finalizeTable: async (tableId: number) => {
     if (isCloud()) {
-       // 1. Remove status de fechamento
+       // 1. Remove status de fechamento da mesa
        await deleteDoc(doc(db, 'tables', tableId.toString()));
        
-       // 2. SOLUÇÃO NUCLEAR: Buscar TUDO e filtrar com '==' (igualdade flexível)
-       // Isso resolve o problema de tipo (string vs number) de uma vez por todas
+       // 2. Busca TODOS os pedidos ativos da coleção 'orders'
        const snapshot = await getDocs(collection(db, 'orders'));
        const batch = writeBatch(db);
-       let updatedCount = 0;
+       let movedCount = 0;
 
        snapshot.docs.forEach((docSnap) => {
            const data = docSnap.data();
-           // Comparação flexível (1 == '1')
+           // Comparação flexível para pegar tanto string "1" quanto number 1
            // eslint-disable-next-line eqeqeq
-           if (data.tableId == tableId && data.status !== OrderStatus.CANCELED && data.status !== OrderStatus.PAID) {
-               batch.update(docSnap.ref, { status: OrderStatus.PAID });
-               updatedCount++;
+           if (data.tableId == tableId) {
+               // A. Cria uma cópia na coleção 'orders_history' (Histórico Financeiro)
+               const historyRef = doc(db, 'orders_history', docSnap.id);
+               batch.set(historyRef, { 
+                   ...data, 
+                   status: OrderStatus.PAID,
+                   archivedAt: Date.now() 
+               });
+
+               // B. Deleta da coleção 'orders' (Mesa fica vazia instantaneamente)
+               batch.delete(docSnap.ref);
+               movedCount++;
            }
        });
 
-       if (updatedCount > 0) {
+       if (movedCount > 0) {
            await batch.commit();
-           console.log(`Mesa ${tableId} fechada. ${updatedCount} pedidos arquivados (PAGO).`);
+           console.log(`Mesa ${tableId} arquivada. ${movedCount} pedidos movidos para 'orders_history'.`);
        } else {
-           console.log(`Mesa ${tableId} fechada. Nenhum pedido pendente encontrado para arquivar.`);
+           console.log(`Mesa ${tableId} fechada. Nenhum pedido para mover.`);
        }
 
     } else {
+      // Lógica Local (manter como estava, apenas deletando/status)
       const tables = JSON.parse(safeStorage.getItem(STORAGE_KEYS.TABLES) || '{}');
       delete tables[tableId];
       safeStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(tables));
@@ -356,6 +371,30 @@ export const StorageService = {
     }
   },
   
+  // Nova função para buscar histórico financeiro
+  getSalesHistory: async (startDate: Date, endDate: Date): Promise<Order[]> => {
+      if(isCloud()) {
+          // No Firestore, queries por data complexas exigem índice. 
+          // Para simplificar e evitar travar, vamos baixar o histórico e filtrar na memória 
+          // (supondo volume razoável para barraca de praia)
+          const snapshot = await getDocs(collection(db, 'orders_history'));
+          const history = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Order));
+          
+          return history.filter(o => {
+              const d = new Date(o.timestamp);
+              return d >= startDate && d <= endDate;
+          });
+      } else {
+          // No modo local, pedidos pagos ficam na mesma lista mas com status PAID
+          const stored = safeStorage.getItem(STORAGE_KEYS.ORDERS);
+          const allOrders = stored ? JSON.parse(stored) : [];
+          return allOrders.filter((o: Order) => {
+              const d = new Date(o.timestamp);
+              return o.status === OrderStatus.PAID && d >= startDate && d <= endDate;
+          });
+      }
+  },
+
   getOrdersOnce: async (): Promise<Order[]> => {
       if(isCloud()) {
           const snapshot = await getDocs(collection(db, 'orders'));
