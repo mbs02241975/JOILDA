@@ -44,6 +44,7 @@ const safeStorage = {
       }
       return item;
     } catch (e) {
+      // Se der erro de segurança (Tracking Prevention), usa memória
       return memoryStore.get(key) || null;
     }
   },
@@ -52,7 +53,8 @@ const safeStorage = {
     try {
       localStorage.setItem(key, value);
     } catch (e) {
-      // Ignore write errors
+      // Ignora erro de gravação, dados ficam só na memória
+      console.warn('Storage bloqueado, usando memória volátil.');
     }
   },
   removeItem: (key: string) => {

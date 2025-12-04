@@ -74,8 +74,12 @@ export const AdminDashboard: React.FC = () => {
   // Reports State
   const [aiReport, setAiReport] = useState<string>('');
   const [isLoadingAi, setIsLoadingAi] = useState(false);
-  const [reportStartDate, setReportStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [reportEndDate, setReportEndDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Inicializa datas com o fuso local para evitar problemas de UTC
+  const today = new Date();
+  const dateStr = today.toLocaleDateString('en-CA'); // YYYY-MM-DD local
+  const [reportStartDate, setReportStartDate] = useState(dateStr);
+  const [reportEndDate, setReportEndDate] = useState(dateStr);
   const [financialStats, setFinancialStats] = useState({ totalRevenue: 0, orderCount: 0, averageTicket: 0 });
 
   // Notification State
@@ -156,10 +160,11 @@ export const AdminDashboard: React.FC = () => {
   }, [isAuthenticated, activeTab, reportStartDate, reportEndDate]);
 
   const loadFinancialData = async () => {
-      const start = new Date(reportStartDate);
-      start.setHours(0,0,0,0);
-      const end = new Date(reportEndDate);
-      end.setHours(23,59,59,999);
+      // CORREÇÃO DE FUSO HORÁRIO:
+      // Ao criar Date a partir de string "YYYY-MM-DD", o JS assume UTC.
+      // Adicionamos o horário T00:00:00 para forçar a interpretação como hora LOCAL do navegador.
+      const start = new Date(reportStartDate + 'T00:00:00');
+      const end = new Date(reportEndDate + 'T23:59:59.999');
 
       // Busca na coleção de histórico (orders_history) - DADOS FRIOS
       const historyOrders = await StorageService.getSalesHistory(start, end);
@@ -335,10 +340,9 @@ export const AdminDashboard: React.FC = () => {
   const generateAiReport = async () => {
     setIsLoadingAi(true);
     // Fetch historical orders for report
-    const start = new Date(reportStartDate);
-    start.setHours(0,0,0,0);
-    const end = new Date(reportEndDate);
-    end.setHours(23,59,59,999);
+    // Correção de Fuso para o relatório IA também
+    const start = new Date(reportStartDate + 'T00:00:00');
+    const end = new Date(reportEndDate + 'T23:59:59.999');
     
     const historyOrders = await StorageService.getSalesHistory(start, end);
 
