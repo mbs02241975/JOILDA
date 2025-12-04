@@ -72,18 +72,19 @@ const isCloud = () => !!db;
 export const StorageService = {
   // --- Initialization ---
   init: (config?: DatabaseConfig) => {
-    // 0. Prevenção de duplicidade
+    // 0. Verifica se já existe uma instância rodando e recupera o DB
     if (getApps().length > 0) {
         try {
             const app = getApp();
             db = getFirestore(app);
+            console.log("Firebase recuperado da instância existente.");
             return true;
         } catch (e) {
-            console.warn("Erro ao recuperar app existente.");
+            console.warn("Erro ao recuperar app existente, tentando reinicializar...");
         }
     }
 
-    // 1. Prioridade Absoluta: Configuração Hardcoded
+    // 1. Prioridade Absoluta: Configuração Hardcoded do arquivo
     if (firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('COLAR_')) {
         config = firebaseConfig;
     } 
@@ -163,7 +164,8 @@ export const StorageService = {
         callback(orders);
       }, (error) => {
          if (error.code === 'permission-denied') {
-             alert('Erro de Permissão: O administrador precisa liberar o acesso no painel do Firebase (Aba Regras).');
+             // Silencia alerta repetitivo, mas loga erro
+             console.error('Erro de Permissão Firebase');
          }
       });
     } else {
