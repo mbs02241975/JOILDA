@@ -1,3 +1,4 @@
+
 import { Product, Category, Order, TableSession, TableStatus, OrderStatus } from '../types';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit } from 'firebase/firestore';
@@ -378,22 +379,28 @@ export const StorageService = {
        // 1. Remove status de fechamento da mesa
        await deleteDoc(doc(db, 'tables', tableId.toString()));
        
-       // 2. Busca todos os pedidos ativos (não cancelados e não pagos) dessa mesa
+       // 2. Busca todos os pedidos ativos dessa mesa para arquivar
+       // Alterei para buscar APENAS pelo tableId para evitar problemas de índice composto no Firebase
        const q = query(
            collection(db, 'orders'), 
-           where('tableId', '==', tableId),
-           where('status', '!=', OrderStatus.CANCELED)
+           where('tableId', '==', tableId)
        );
        
        const querySnapshot = await getDocs(q);
+       const updatePromises: Promise<void>[] = [];
        
-       // 3. Atualiza os pedidos para status PAID (Pago/Finalizado)
-       // Isso limpa a mesa para o próximo cliente, mas mantém o registro financeiro
-       querySnapshot.forEach(async (d) => {
-           if (d.data().status !== OrderStatus.PAID) {
-               await updateDoc(d.ref, { status: OrderStatus.PAID });
+       // 3. Atualiza os pedidos para status PAID (Pago/Finalizado) de forma segura
+       querySnapshot.forEach((d) => {
+           const data = d.data();
+           // Só altera se não for cancelado e se já não estiver pago
+           if (data.status !== OrderStatus.CANCELED && data.status !== OrderStatus.PAID) {
+               updatePromises.push(updateDoc(d.ref, { status: OrderStatus.PAID }));
            }
        });
+
+       // Aguarda TODOS os pedidos serem atualizados antes de liberar
+       await Promise.all(updatePromises);
+       console.log(`Mesa ${tableId} finalizada. ${updatePromises.length} pedidos arquivados.`);
 
     } else {
       const tables = JSON.parse(safeStorage.getItem(STORAGE_KEYS.TABLES) || '{}');
