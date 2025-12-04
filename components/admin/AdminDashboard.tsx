@@ -161,7 +161,7 @@ export const AdminDashboard: React.FC = () => {
       const end = new Date(reportEndDate);
       end.setHours(23,59,59,999);
 
-      // Busca na coleção de histórico (orders_history)
+      // Busca na coleção de histórico (orders_history) - DADOS FRIOS
       const historyOrders = await StorageService.getSalesHistory(start, end);
       
       const totalRevenue = historyOrders.reduce((acc, o) => acc + o.total, 0);
@@ -199,8 +199,8 @@ export const AdminDashboard: React.FC = () => {
   const handleCloseTable = async (tableId: number) => {
     if (window.confirm(`Confirma o recebimento e fechamento da Mesa ${tableId}?`)) {
       await StorageService.finalizeTable(tableId);
-      // Força um pequeno delay para a UI atualizar
-      setTimeout(() => alert(`Mesa ${tableId} fechada com sucesso!`), 500);
+      // Recarrega dados financeiros para refletir o fechamento
+      setTimeout(() => loadFinancialData(), 1000);
     }
   };
 

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Product, Category, CartItem, OrderStatus, PaymentMethod, TableStatus, Order } from '../../types';
 import { StorageService } from '../../services/storageService';
@@ -51,7 +52,8 @@ export const ClientView: React.FC<Props> = ({ tableId }) => {
 
     // Subscribe Table Status
     const unsubTables = StorageService.subscribeTables((tables) => {
-        const myTable = tables[tableId];
+        // Busca flexível pela mesa (string ou number)
+        const myTable = tables[tableId] || tables[String(tableId)];
         setSessionStatus(myTable?.status || TableStatus.OPEN);
     });
 

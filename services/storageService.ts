@@ -32,7 +32,7 @@ const STORAGE_KEYS = {
 let db: any = null; // Firestore instance
 
 // --- Robust Storage Implementation ---
-// Fallback em memória caso o LocalStorage seja bloqueado pelo navegador (Tracking Prevention)
+// Fallback em memória caso o LocalStorage seja bloqueado pelo navegador
 const memoryStore = new Map<string, string>();
 
 const safeStorage = {
@@ -316,39 +316,34 @@ export const StorageService = {
     }
   },
 
-  // --- SOLUÇÃO PENTE FINO: Busca Híbrida e Movimentação Segura ---
+  // --- SOLUÇÃO NUCLEAR: Varredura total e movimentação física ---
   finalizeTable: async (tableId: number) => {
     if (isCloud()) {
        try {
-           // 1. Remove status de fechamento da mesa
+           console.log(`NUCLEAR: Iniciando fechamento da mesa ${tableId}...`);
+
+           // 1. Limpa o status da mesa (libera o alerta no painel)
            await deleteDoc(doc(db, 'tables', tableId.toString()));
            
-           console.log(`Iniciando fechamento da mesa ${tableId}...`);
+           // 2. Busca TODOS os pedidos ativos (sem filtro no banco para evitar erro de índice)
+           const querySnapshot = await getDocs(collection(db, 'orders'));
+           
+           // 3. Filtro MANUAL no código (ignora diferença entre '1' e 1)
+           // eslint-disable-next-line eqeqeq
+           const tableOrders = querySnapshot.docs.filter(d => d.data().tableId == tableId);
 
-           // 2. Busca Dupla: Pelo número E pelo texto (para garantir que acha tudo)
-           const qNumber = query(collection(db, 'orders'), where('tableId', '==', Number(tableId)));
-           const qString = query(collection(db, 'orders'), where('tableId', '==', String(tableId)));
-           
-           const [snapNum, snapStr] = await Promise.all([getDocs(qNumber), getDocs(qString)]);
-           
-           // Junta os resultados sem duplicatas (pelo ID do documento)
-           const allDocsMap = new Map();
-           snapNum.docs.forEach(d => allDocsMap.set(d.id, d));
-           snapStr.docs.forEach(d => allDocsMap.set(d.id, d));
-
-           const docsToMove = Array.from(allDocsMap.values());
-           
-           if (docsToMove.length === 0) {
-               alert(`Nenhum pedido ativo encontrado para Mesa ${tableId}. Mesa liberada.`);
+           if (tableOrders.length === 0) {
+               alert(`Mesa ${tableId} fechada. (Nenhum pedido ativo encontrado para arquivar).`);
                return;
            }
 
            const batch = writeBatch(db);
 
-           docsToMove.forEach((docSnap) => {
+           tableOrders.forEach((docSnap) => {
                const data = docSnap.data();
                
-               // A. Cria uma cópia na coleção 'orders_history'
+               // A. Cria uma cópia na coleção 'orders_history' (DADOS FRIOS)
+               // Isso garante que o relatório financeiro tenha os dados
                const historyRef = doc(db, 'orders_history', docSnap.id);
                batch.set(historyRef, { 
                    ...data, 
@@ -356,12 +351,14 @@ export const StorageService = {
                    archivedAt: Date.now() 
                });
 
-               // B. Deleta da coleção 'orders' (Mesa fica limpa imediatamente)
+               // B. Deleta da coleção 'orders' (DADOS QUENTES)
+               // Isso garante que o celular NUNCA MAIS veja esses pedidos
                batch.delete(docSnap.ref);
            });
 
            await batch.commit();
-           alert(`Mesa ${tableId} fechada com sucesso! ${docsToMove.length} pedidos arquivados.`);
+           console.log(`Sucesso: ${tableOrders.length} pedidos arquivados.`);
+           alert(`Mesa ${tableId} fechada e zerada com sucesso!`);
 
        } catch (error: any) {
            console.error("Erro fatal ao fechar mesa:", error);
@@ -388,7 +385,7 @@ export const StorageService = {
   
   getSalesHistory: async (startDate: Date, endDate: Date): Promise<Order[]> => {
       if(isCloud()) {
-          // Busca histórico da coleção orders_history
+          // Busca histórico da coleção orders_history (Onde os dados pagos moram agora)
           const snapshot = await getDocs(collection(db, 'orders_history'));
           const history = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Order));
           
