@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Order, OrderStatus, Product, Category, TableStatus, PaymentMethod } from '../../types';
 import { StorageService, DatabaseConfig } from '../../services/storageService';
@@ -170,6 +171,8 @@ export const AdminDashboard: React.FC = () => {
   const handleCloseTable = async (tableId: number) => {
     if (window.confirm(`Confirma o recebimento e fechamento da Mesa ${tableId}?`)) {
       await StorageService.finalizeTable(tableId);
+      // Força um pequeno delay para a UI atualizar
+      setTimeout(() => alert(`Mesa ${tableId} fechada com sucesso!`), 500);
     }
   };
 
@@ -461,7 +464,7 @@ export const AdminDashboard: React.FC = () => {
 
     const filteredOrders = orders.filter(o => {
       const orderDate = new Date(o.timestamp);
-      // Inclui pedidos PAID (que foram finalizados e pagos) e DELIVERED (caso ainda não tenha fechado mesa)
+      // O Relatório DEVE incluir pedidos pagos (PAID) e entregues
       return (o.status === OrderStatus.PAID || o.status === OrderStatus.DELIVERED) && orderDate >= start && orderDate <= end;
     });
 
@@ -815,6 +818,13 @@ export const AdminDashboard: React.FC = () => {
                       onChange={(e) => setReportEndDate(e.target.value)}
                       className="border rounded px-2 py-1 text-sm"
                     />
+                    <button 
+                       onClick={() => window.location.reload()} 
+                       className="bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-600"
+                       title="Atualizar Dados"
+                    >
+                        <i className="fas fa-sync-alt"></i>
+                    </button>
                  </div>
                </div>
 

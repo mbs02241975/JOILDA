@@ -1,7 +1,7 @@
 
 import { Product, Category, Order, TableSession, TableStatus, OrderStatus } from '../types';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit, writeBatch } from 'firebase/firestore';
 import { firebaseConfig } from './firebaseConfig';
 
 // --- Configuration Interface ---
@@ -38,26 +38,21 @@ const memoryStore = new Map<string, string>();
 const safeStorage = {
   getItem: (key: string) => {
     try {
-      // Tenta ler do localStorage
       const item = localStorage.getItem(key);
-      // Se retornar null, pode ser que a escrita anterior tenha falhado no disco mas tenha salvo na memória
       if (item === null && memoryStore.has(key)) {
         return memoryStore.get(key) || null;
       }
       return item;
     } catch (e) {
-      // Acesso bloqueado, usa memória volátil
       return memoryStore.get(key) || null;
     }
   },
   setItem: (key: string, value: string) => {
-    // Salva na memória sempre para garantir consistência na sessão atual
     memoryStore.set(key, value);
     try {
       localStorage.setItem(key, value);
     } catch (e) {
-      // Silenciosamente ignora falha de escrita no disco (bloqueio de privacidade)
-      // O app continuará funcionando via memoryStore
+      // Ignore write errors
     }
   },
   removeItem: (key: string) => {
@@ -65,37 +60,31 @@ const safeStorage = {
     try {
       localStorage.removeItem(key);
     } catch (e) {
-      // Ignora erro
+      // Ignore errors
     }
   }
 };
 
-// Helper to check if we are using cloud DB
 const isCloud = () => !!db;
 
 export const StorageService = {
   // --- Initialization ---
   init: (config?: DatabaseConfig) => {
-    // 0. Prevenção de duplicidade (Crítico para Mobile/React)
-    // Se já existe uma instância do Firebase rodando, reutiliza ela.
+    // 0. Prevenção de duplicidade
     if (getApps().length > 0) {
-        console.log("Firebase já inicializado. Reutilizando conexão.");
         try {
             const app = getApp();
             db = getFirestore(app);
             return true;
         } catch (e) {
-            console.warn("Erro ao recuperar app existente, tentando reiniciar...");
+            console.warn("Erro ao recuperar app existente.");
         }
     }
 
-    // 1. Prioridade Absoluta: Configuração Hardcoded (firebaseConfig.ts)
-    // Isso garante que celulares sempre conectem, ignorando cache antigo ou localStorage
+    // 1. Prioridade Absoluta: Configuração Hardcoded
     if (firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('COLAR_')) {
-        console.log("Inicializando conexão com credenciais fixas.");
         config = firebaseConfig;
     } 
-    // 2. Fallback: LocalStorage (apenas se não tiver config fixa, o que é raro agora)
     else if (!config) {
       const storedConfig = safeStorage.getItem(STORAGE_KEYS.DB_CONFIG);
       if (storedConfig) {
@@ -112,7 +101,6 @@ export const StorageService = {
         console.log("Firebase conectado com sucesso!");
         return true;
       } catch (error: any) {
-        // Se der erro de duplicidade por condição de corrida, recupera a instância
         if (error.code === 'app/duplicate-app') {
             const app = getApp();
             db = getFirestore(app);
@@ -122,7 +110,6 @@ export const StorageService = {
         return false;
       }
     }
-    console.warn("Nenhuma configuração válida encontrada. Iniciando em modo OFFLINE (Local).");
     return false;
   },
 
@@ -147,13 +134,9 @@ export const StorageService = {
         const products = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Product));
         callback(products);
       }, (error) => {
-          console.error("Erro ao assinar produtos:", error);
-          if (error.code === 'permission-denied') {
-              alert("ERRO NO CELULAR: Permissão negada pelo banco de dados. O Administrador precisa liberar o acesso no painel do Firebase (Regras).");
-          }
+          console.error("Erro subscribeProducts:", error);
       });
     } else {
-      // LocalStorage Polling Fallback
       const fetch = () => {
         const stored = safeStorage.getItem(STORAGE_KEYS.PRODUCTS);
         if (!stored) {
@@ -212,76 +195,49 @@ export const StorageService = {
   saveProduct: async (product: Product) => {
     if (isCloud()) {
       try {
-          // Lógica Corrigida: Se o ID existe e não é vazio, é atualização.
           if (product.id && product.id.length > 0) { 
             const docRef = doc(db, 'products', product.id);
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { id, ...data } = product;
             await updateDoc(docRef, data);
-            console.log("Produto atualizado com sucesso");
           } else {
-            // Novo Produto: Verifica duplicidade por NOME antes de criar
             const q = query(collection(db, 'products'), where('name', '==', product.name));
             const querySnapshot = await getDocs(q);
 
             if (!querySnapshot.empty) {
-                // Produto já existe, vamos somar ao estoque!
                 const existingDoc = querySnapshot.docs[0];
                 const currentData = existingDoc.data();
-                const currentStock = currentData.stock || 0;
-                
                 await updateDoc(existingDoc.ref, {
-                    stock: currentStock + product.stock,
+                    stock: (currentData.stock || 0) + product.stock,
                     price: product.price,
                     description: product.description,
                     imageUrl: product.imageUrl || currentData.imageUrl
                 });
-                console.log(`Estoque atualizado para ${product.name}`);
             } else {
-                // Não existe, cria novo (Firestore gera o ID)
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                const { id, ...data } = product; // Remove o ID vazio se existir
+                const { id, ...data } = product;
                 await addDoc(collection(db, 'products'), data);
-                console.log("Novo produto criado");
             }
           }
       } catch (error: any) {
-          console.error("Erro no Firebase:", error);
-          if (error.code === 'permission-denied') {
-             alert('ERRO DE PERMISSÃO: O banco de dados está bloqueado. Vá no console do Firebase > Firestore Database > Regras e altere para "allow read, write: if true;"');
-          } else if (error.code === 'resource-exhausted') {
-              alert('A imagem é muito pesada para o banco gratuito. Tente usar o campo de Link (URL) em vez da câmera.');
-          } else {
-              alert(`Erro ao salvar: ${error.message}`);
+          console.error("Erro saveProduct:", error);
+          if (error.code === 'resource-exhausted') {
+              alert('A imagem é muito pesada. Use Link (URL).');
           }
           throw error;
       }
     } else {
-      // Modo Local
       const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
       const existingIndex = products.findIndex((p: Product) => p.id === product.id);
       
-      const nameIndex = products.findIndex((p: Product) => p.name === product.name && p.id !== product.id);
+      if (!product.id || product.id.length < 5) product.id = 'local_' + Date.now();
 
-      // Se é um produto novo sem ID (ou ID temp), gera um ID
-      if (!product.id || product.id.length < 5) {
-          product.id = 'local_' + Date.now();
+      if (existingIndex >= 0) {
+        products[existingIndex] = product;
+      } else {
+        products.push(product);
       }
-
-      try {
-          if (existingIndex >= 0) {
-            products[existingIndex] = product;
-          } else if (nameIndex >= 0) {
-             products[nameIndex].stock += product.stock;
-             products[nameIndex].price = product.price;
-             products[nameIndex].imageUrl = product.imageUrl || products[nameIndex].imageUrl;
-          } else {
-            products.push(product);
-          }
-          safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
-      } catch (e) {
-          alert('Memória do navegador cheia! Não foi possível salvar a imagem.');
-      }
+      safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
     }
   },
 
@@ -310,30 +266,21 @@ export const StorageService = {
     };
 
     if (isCloud()) {
-        // Create Order
         await addDoc(collection(db, 'orders'), orderData);
-
-        // Update Stock Atomically
         items.forEach(async (item) => {
              const pRef = doc(db, 'products', item.product.id);
-             // Use Firestore increment with negative value to decrement
-             await updateDoc(pRef, {
-                 stock: increment(-item.quantity)
-             });
+             await updateDoc(pRef, { stock: increment(-item.quantity) });
         });
     } else {
       const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
       items.forEach(item => {
         const pIndex = products.findIndex((p: Product) => p.id === item.product.id);
-        if (pIndex >= 0) {
-          products[pIndex].stock = Math.max(0, products[pIndex].stock - item.quantity);
-        }
+        if (pIndex >= 0) products[pIndex].stock = Math.max(0, products[pIndex].stock - item.quantity);
       });
       safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
 
-      const newOrder = { ...orderData, id: Date.now().toString() };
       const orders = JSON.parse(safeStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-      orders.push(newOrder);
+      orders.push({ ...orderData, id: Date.now().toString() });
       safeStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
     }
   },
@@ -341,20 +288,10 @@ export const StorageService = {
   updateOrderStatus: async (orderId: string, status: OrderStatus) => {
     if (isCloud()) {
       await updateDoc(doc(db, 'orders', orderId), { status });
-      
-      // If cancelled, restore stock logic (omitted for brevity)
     } else {
       const orders = JSON.parse(safeStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
       const order = orders.find((o: Order) => o.id === orderId);
       if (order) {
-        if (status === OrderStatus.CANCELED && order.status !== OrderStatus.CANCELED) {
-          const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
-          order.items.forEach((item: any) => {
-             const p = products.find((p: Product) => p.id === item.productId);
-             if (p) p.stock += item.quantity;
-          });
-          safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
-        }
         order.status = status;
         safeStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
       }
@@ -376,42 +313,37 @@ export const StorageService = {
 
   finalizeTable: async (tableId: number) => {
     if (isCloud()) {
-       // 1. Remove status de fechamento da mesa
+       // 1. Remove status de fechamento
        await deleteDoc(doc(db, 'tables', tableId.toString()));
        
-       // 2. Busca todos os pedidos ativos dessa mesa para arquivar
-       // CORREÇÃO: Busca tanto pelo número quanto pela string para garantir que acha tudo
-       const q1 = query(collection(db, 'orders'), where('tableId', '==', tableId));
-       const q2 = query(collection(db, 'orders'), where('tableId', '==', tableId.toString()));
-       
-       const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
-       
-       const updatePromises: Promise<void>[] = [];
-       const docsProcessed = new Set();
+       // 2. SOLUÇÃO NUCLEAR: Buscar TUDO e filtrar com '==' (igualdade flexível)
+       // Isso resolve o problema de tipo (string vs number) de uma vez por todas
+       const snapshot = await getDocs(collection(db, 'orders'));
+       const batch = writeBatch(db);
+       let updatedCount = 0;
 
-       const processDoc = (d: any) => {
-         if (docsProcessed.has(d.id)) return;
-         docsProcessed.add(d.id);
+       snapshot.docs.forEach((docSnap) => {
+           const data = docSnap.data();
+           // Comparação flexível (1 == '1')
+           // eslint-disable-next-line eqeqeq
+           if (data.tableId == tableId && data.status !== OrderStatus.CANCELED && data.status !== OrderStatus.PAID) {
+               batch.update(docSnap.ref, { status: OrderStatus.PAID });
+               updatedCount++;
+           }
+       });
 
-         const data = d.data();
-         if (data.status !== OrderStatus.CANCELED && data.status !== OrderStatus.PAID) {
-            updatePromises.push(updateDoc(d.ref, { status: OrderStatus.PAID }));
-         }
-       };
-
-       snap1.forEach(processDoc);
-       snap2.forEach(processDoc);
-
-       // Aguarda TODOS os pedidos serem atualizados antes de liberar
-       await Promise.all(updatePromises);
-       console.log(`Mesa ${tableId} finalizada. ${updatePromises.length} pedidos arquivados.`);
+       if (updatedCount > 0) {
+           await batch.commit();
+           console.log(`Mesa ${tableId} fechada. ${updatedCount} pedidos arquivados (PAGO).`);
+       } else {
+           console.log(`Mesa ${tableId} fechada. Nenhum pedido pendente encontrado para arquivar.`);
+       }
 
     } else {
       const tables = JSON.parse(safeStorage.getItem(STORAGE_KEYS.TABLES) || '{}');
       delete tables[tableId];
       safeStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(tables));
       
-      // Modo Local: Marca pedidos como pagos
       const orders = JSON.parse(safeStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
       const updatedOrders = orders.map((o: Order) => {
           // eslint-disable-next-line eqeqeq
@@ -424,7 +356,6 @@ export const StorageService = {
     }
   },
   
-  // Async helper for reports
   getOrdersOnce: async (): Promise<Order[]> => {
       if(isCloud()) {
           const snapshot = await getDocs(collection(db, 'orders'));
@@ -435,45 +366,19 @@ export const StorageService = {
       }
   },
 
-  // Diagnostic tool
   runDiagnostics: async () => {
-    console.log("--- Diagnóstico Iniciado ---");
     if (isCloud()) {
         try {
-            console.log("Verificando conexão com Firestore...");
-            // Tenta buscar 1 produto para validar leitura
             const q = query(collection(db, 'products'), limit(1));
             await getDocs(q);
-            console.log("Conexão Firestore: OK");
             alert("Conexão com Banco de Dados (Firebase) está OK!");
         } catch (e: any) {
-            console.error("Conexão Firestore: ERRO", e);
-            if (e.code === 'permission-denied') {
-                alert("ERRO CRÍTICO: Permissão Negada. Verifique as 'Regras' do Firestore no console do Google.");
-            } else {
-                alert(`Erro ao conectar com Firebase: ${e.message}`);
-            }
+            alert(`Erro ao conectar com Firebase: ${e.message}`);
         }
     } else {
-        console.log("Modo Local (Offline/Fallback)");
-        try {
-            const key = 'test_diag_' + Date.now();
-            safeStorage.setItem(key, 'ok');
-            const val = safeStorage.getItem(key);
-            safeStorage.removeItem(key);
-            
-            if (val === 'ok') {
-                alert("Armazenamento Local (Navegador) está funcionando.");
-            } else {
-                 alert("Alerta: Armazenamento Local parece estar bloqueado.");
-            }
-        } catch (e: any) {
-            alert(`Erro no Armazenamento Local: ${e.message}`);
-        }
+        alert("Modo Local (Offline)");
     }
   }
 };
 
-// --- AUTO-INITIALIZE ---
-// Tenta conectar imediatamente usando as chaves fixas
 StorageService.init();
