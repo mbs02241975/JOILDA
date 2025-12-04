@@ -1,4 +1,3 @@
-
 import { Product, Category, Order, TableStatus, OrderStatus } from '../types';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit, writeBatch } from 'firebase/firestore';
@@ -332,12 +331,15 @@ export const StorageService = {
            // 2. Busca TODOS os pedidos ativos (sem filtro no banco para evitar erro de índice)
            const querySnapshot = await getDocs(collection(db, 'orders'));
            
-           // 3. Filtro MANUAL no código (ignora diferença entre '1' e 1)
-           // eslint-disable-next-line eqeqeq
-           const tableOrders = querySnapshot.docs.filter(d => d.data().tableId == tableId);
+           // 3. Filtro MANUAL no código com conversão de tipos (String vs Number)
+           const tableOrders = querySnapshot.docs.filter(d => {
+               const data = d.data();
+               // A mágica: Converte tudo para string antes de comparar
+               return String(data.tableId) === String(tableId);
+           });
 
            if (tableOrders.length === 0) {
-               alert(`Mesa ${tableId} fechada. (Nenhum pedido ativo encontrado para arquivar).`);
+               alert(`Mesa ${tableId} fechada. (AVISO: Não encontrei pedidos ativos para arquivar).`);
                return;
            }
 
@@ -362,7 +364,7 @@ export const StorageService = {
 
            await batch.commit();
            console.log(`Sucesso: ${tableOrders.length} pedidos arquivados.`);
-           alert(`Mesa ${tableId} fechada e zerada com sucesso!`);
+           alert(`Mesa ${tableId} fechada! ${tableOrders.length} pedidos foram arquivados e contabilizados.`);
 
        } catch (error: any) {
            console.error("Erro fatal ao fechar mesa:", error);
