@@ -1,3 +1,4 @@
+
 import { Product, Category, Order, TableStatus, OrderStatus } from '../types';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, orderBy, setDoc, getDocs, increment, where, limit, writeBatch } from 'firebase/firestore';
@@ -375,7 +376,7 @@ export const StorageService = {
        }
 
     } else {
-      // Lógica Local (manter como estava)
+      // Lógica Local
       const tables = JSON.parse(safeStorage.getItem(STORAGE_KEYS.TABLES) || '{}');
       delete tables[tableId];
       safeStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(tables));
@@ -390,6 +391,21 @@ export const StorageService = {
       });
       safeStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
     }
+  },
+
+  // --- Função para limpar mesa à força (apaga sem arquivar) em caso de erro ---
+  forceClearTable: async (tableId: number) => {
+      if (isCloud()) {
+          try {
+             await deleteDoc(doc(db, 'tables', tableId.toString()));
+             const querySnapshot = await getDocs(collection(db, 'orders'));
+             const tableOrders = querySnapshot.docs.filter(d => String(d.data().tableId) === String(tableId));
+             
+             const batch = writeBatch(db);
+             tableOrders.forEach(d => batch.delete(d.ref));
+             await batch.commit();
+          } catch(e) { console.error(e); }
+      }
   },
   
   getSalesHistory: async (startDate: Date, endDate: Date): Promise<Order[]> => {

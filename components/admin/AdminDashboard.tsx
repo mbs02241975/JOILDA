@@ -160,13 +160,9 @@ export const AdminDashboard: React.FC = () => {
   }, [isAuthenticated, activeTab, reportStartDate, reportEndDate]);
 
   const loadFinancialData = async () => {
-      // CORREÇÃO DE FUSO HORÁRIO:
-      // Ao criar Date a partir de string "YYYY-MM-DD", o JS assume UTC.
-      // Adicionamos o horário T00:00:00 para forçar a interpretação como hora LOCAL do navegador.
       const start = new Date(reportStartDate + 'T00:00:00');
       const end = new Date(reportEndDate + 'T23:59:59.999');
 
-      // Busca na coleção de histórico (orders_history) - DADOS FRIOS
       const historyOrders = await StorageService.getSalesHistory(start, end);
       
       const totalRevenue = historyOrders.reduce((acc, o) => acc + o.total, 0);
@@ -202,11 +198,19 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const handleCloseTable = async (tableId: number) => {
-    if (window.confirm(`Confirma o recebimento e fechamento da Mesa ${tableId}?`)) {
+    if (window.confirm(`Confirma o recebimento e fechamento da Mesa ${tableId}? Isso irá arquivar os pedidos e limpar a mesa.`)) {
       await StorageService.finalizeTable(tableId);
       // Recarrega dados financeiros para refletir o fechamento
-      setTimeout(() => loadFinancialData(), 1000);
+      setTimeout(() => loadFinancialData(), 1500);
     }
+  };
+
+  // Nova função para limpar mesa manualmente em caso de emergência
+  const handleForceClearTable = async (tableId: number) => {
+      if (window.confirm(`ATENÇÃO: Deseja forçar a limpeza da Mesa ${tableId}? Use isso apenas se a mesa travou. Os dados serão apagados.`)) {
+          await StorageService.forceClearTable(tableId);
+          alert('Limpeza forçada realizada.');
+      }
   };
 
   const handleSaveProduct = async (e: React.FormEvent) => {
@@ -218,7 +222,6 @@ export const AdminDashboard: React.FC = () => {
         setEditingProduct(null);
       } catch (error: any) {
         console.error(error);
-        // Error handling is done in storageService, but we catch here to prevent crash
       }
     }
   };
@@ -233,9 +236,8 @@ export const AdminDashboard: React.FC = () => {
       reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
-          // Resize Logic using Canvas - EXTREME AGGRESSIVE RESIZE for Free Tier
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 250; // 250px ensures very small file size
+          const MAX_WIDTH = 250; 
           
           let width = img.width;
           let height = img.height;
@@ -251,7 +253,6 @@ export const AdminDashboard: React.FC = () => {
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, width, height);
           
-          // Compress to JPEG 40% quality
           const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
           
           setEditingProduct({ ...editingProduct, imageUrl: dataUrl });
@@ -339,8 +340,6 @@ export const AdminDashboard: React.FC = () => {
 
   const generateAiReport = async () => {
     setIsLoadingAi(true);
-    // Fetch historical orders for report
-    // Correção de Fuso para o relatório IA também
     const start = new Date(reportStartDate + 'T00:00:00');
     const end = new Date(reportEndDate + 'T23:59:59.999');
     
@@ -500,12 +499,9 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Active orders shouldn't show PAID (archived) orders
-  // Agora que movemos os pagos para outra coleção, o array 'orders' só tem ativos
   const activeOrders = orders.filter(o => o.status !== OrderStatus.CANCELED);
   const isLocalhost = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
 
-  // --- Auth Gate ---
   if (!isAuthenticated) {
       return (
           <div className="min-h-screen bg-brand-light flex items-center justify-center p-4">
@@ -554,10 +550,8 @@ export const AdminDashboard: React.FC = () => {
       );
   }
 
-  // --- Main Dashboard ---
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col md:flex-row">
-      {/* Global Notification Toast */}
       {notification.visible && (
         <div className="fixed top-4 right-4 z-50 bg-brand-orange text-white px-6 py-4 rounded-lg shadow-2xl flex items-center gap-4 animate-bounce">
           <i className="fas fa-bell text-2xl animate-swing"></i>
@@ -571,7 +565,6 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Sidebar */}
       <aside className="bg-brand-dark text-white w-full md:w-64 flex-shrink-0 p-4 flex flex-col">
         <div className="flex-1">
             <h1 className="text-2xl font-bold mb-8"><i className="fas fa-umbrella-beach mr-2"></i>Admin</h1>
@@ -625,11 +618,9 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 p-6 overflow-auto h-screen">
         {activeTab === 'orders' && (
           <div className="space-y-6 pb-10">
-            {/* Notification Settings Bar */}
             <div className="bg-white p-4 rounded shadow-sm flex flex-wrap items-center justify-between gap-4 border-l-4 border-brand">
               <div className="flex items-center gap-2">
                  <span className="font-bold text-gray-700"><i className="fas fa-volume-up mr-2"></i>Alerta Sonoro:</span>
@@ -652,18 +643,17 @@ export const AdminDashboard: React.FC = () => {
                    <i className="fas fa-play"></i>
                  </button>
               </div>
-              <div className="text-xs text-gray-500">
-                Sistema em tempo real. Pedidos aparecem instantaneamente.
-              </div>
             </div>
 
-            {/* Active Tables needing attention */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {Object.entries(tables)
                 .filter(([_, t]: [string, any]) => t.status === TableStatus.CLOSING_REQUESTED)
                 .map(([id, t]: [string, any]) => {
                   const realTableId = parseInt(id);
-                  const tableOrders = orders.filter(o => o.tableId === realTableId && o.status !== OrderStatus.CANCELED && o.status !== OrderStatus.PAID);
+                  const tableOrders = orders.filter(o => {
+                      // Comparação flexível para encontrar pedidos da mesa
+                      return String(o.tableId) === String(realTableId) && o.status !== OrderStatus.CANCELED && o.status !== OrderStatus.PAID
+                  });
                   const totalConsumption = tableOrders.reduce((acc, o) => acc + o.total, 0);
 
                   return (
@@ -678,19 +668,26 @@ export const AdminDashboard: React.FC = () => {
                             <p><strong>Total Consumido:</strong> R$ {totalConsumption.toFixed(2)}</p>
                         </div>
 
-                        <div className="flex gap-2">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex gap-2">
+                            <button 
+                                onClick={() => printReceipt(realTableId, tableOrders)}
+                                className="flex-1 bg-gray-700 text-white px-3 py-2 rounded text-sm hover:bg-gray-900"
+                            >
+                                <i className="fas fa-print mr-1"></i> Imprimir
+                            </button>
+                            <button 
+                                onClick={() => handleCloseTable(realTableId)}
+                                className="flex-1 bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 font-bold"
+                            >
+                                <i className="fas fa-check mr-1"></i> Receber
+                            </button>
+                          </div>
                           <button 
-                            onClick={() => printReceipt(realTableId, tableOrders)}
-                            className="flex-1 bg-gray-700 text-white px-3 py-2 rounded text-sm hover:bg-gray-900"
-                            title="Imprimir Cupom"
+                            onClick={() => handleForceClearTable(realTableId)}
+                            className="text-xs text-red-400 hover:text-red-600 underline text-right mt-1"
                           >
-                            <i className="fas fa-print mr-1"></i> Imprimir
-                          </button>
-                          <button 
-                            onClick={() => handleCloseTable(realTableId)}
-                            className="flex-1 bg-red-600 text-white px-3 py-2 rounded text-sm hover:bg-red-700 font-bold"
-                          >
-                            <i className="fas fa-check mr-1"></i> Receber
+                            Forçar Limpeza (Se travar)
                           </button>
                         </div>
                     </div>
@@ -703,7 +700,6 @@ export const AdminDashboard: React.FC = () => {
               {activeOrders.length === 0 && <p className="text-gray-500">Sem pedidos pendentes.</p>}
               {activeOrders.map(order => (
                 <div key={order.id} className={`bg-white p-4 rounded shadow-sm border-l-4 relative overflow-hidden transition-all ${order.status === OrderStatus.PENDING ? 'border-yellow-400 ring-2 ring-yellow-100' : 'border-blue-400'}`}>
-                  {/* New Badge */}
                   {order.status === OrderStatus.PENDING && (
                     <div className="absolute top-0 right-0 bg-yellow-400 text-yellow-900 text-xs font-bold px-2 py-1 rounded-bl">Novo</div>
                   )}
@@ -754,6 +750,8 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
+        {/* ... (Other tabs code maintained) ... */}
+        {/* Manter o restante do código das outras abas igual ao anterior */}
         {activeTab === 'inventory' && (
           <div className="bg-white rounded shadow p-6">
             <div className="flex justify-between items-center mb-6">
@@ -821,8 +819,6 @@ export const AdminDashboard: React.FC = () => {
 
         {activeTab === 'reports' && (
           <div className="space-y-6">
-            
-            {/* Financial Report Section */}
             <div className="bg-white p-6 rounded shadow border-l-4 border-green-500">
                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
                  <h2 className="text-xl font-bold text-gray-800"><i className="fas fa-cash-register mr-2"></i>Relatório Financeiro</h2>
@@ -908,7 +904,6 @@ export const AdminDashboard: React.FC = () => {
             </div>
             
             <div className="flex flex-col lg:flex-row gap-8 h-full items-start">
-              {/* Left Column: Settings */}
               <div className="w-full lg:w-1/2 space-y-6">
                 
                 <div className="bg-white p-5 border rounded-lg shadow-sm">
@@ -999,7 +994,6 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Right Column: Preview */}
               <div className="w-full lg:w-1/2 flex justify-center bg-gray-50 rounded-xl border border-gray-200 p-8">
                 <div id="printable-qr" className="bg-white p-6 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center shadow-lg max-w-sm w-full transform scale-90 origin-top">
                   <div className="card text-center">
