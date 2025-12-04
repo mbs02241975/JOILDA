@@ -335,8 +335,11 @@ export const StorageService = {
            const tableOrders = querySnapshot.docs.filter(d => {
                const data = d.data();
                // A mágica: Converte tudo para string antes de comparar
+               // Isso resolve o problema de '1' !== 1
                return String(data.tableId) === String(tableId);
            });
+
+           console.log(`Encontrados ${tableOrders.length} pedidos para arquivar.`);
 
            if (tableOrders.length === 0) {
                alert(`Mesa ${tableId} fechada. (AVISO: Não encontrei pedidos ativos para arquivar).`);
