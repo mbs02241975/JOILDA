@@ -380,10 +380,10 @@ export const StorageService = {
        await deleteDoc(doc(db, 'tables', tableId.toString()));
        
        // 2. Busca todos os pedidos ativos dessa mesa para arquivar
-       // Alterei para buscar APENAS pelo tableId para evitar problemas de índice composto no Firebase
+       // CORREÇÃO: Busca tanto pelo número quanto pela string para garantir que acha tudo
        const q = query(
            collection(db, 'orders'), 
-           where('tableId', '==', tableId)
+           where('tableId', 'in', [tableId, tableId.toString()])
        );
        
        const querySnapshot = await getDocs(q);
